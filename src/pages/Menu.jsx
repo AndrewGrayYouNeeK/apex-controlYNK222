@@ -43,7 +43,7 @@ export default function Menu() {
           <div className="flex items-center justify-center gap-3 mb-3">
             <Radio className="w-8 h-8 text-primary text-glow" />
             <h1 className="font-display text-3xl md:text-4xl text-primary text-glow tracking-wider">
-              YouNeeK APEX CONTROL
+              YOUNEEK APEX CONTROL
             </h1>
           </div>
           <p className="font-mono text-xs text-muted-foreground tracking-widest uppercase">
