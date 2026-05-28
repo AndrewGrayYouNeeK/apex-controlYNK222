@@ -274,7 +274,7 @@ export default function Simulator() {
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/30 bg-card/30 relative z-10">
         <div className="flex items-center gap-3">
           <Radio className="w-4 h-4 text-primary" />
-          <span className="font-display text-xs text-primary text-glow tracking-wider">APEX CONTROL</span>
+          <span className="font-display text-xs text-primary text-glow tracking-wider">YouNeeK APEX CONTROL</span>
           <span className="font-mono text-[10px] text-muted-foreground">{airport.id} — {airport.name}</span>
         </div>
         <div className="flex items-center gap-2">
