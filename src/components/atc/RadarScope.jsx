@@ -13,9 +13,11 @@ export default function RadarScope({ aircraft, conflicts, selectedAircraft, onSe
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = SCOPE_SIZE * dpr;
-    canvas.height = SCOPE_SIZE * dpr;
-    ctx.scale(dpr, dpr);
+    if (canvas.width !== SCOPE_SIZE * dpr) {
+      canvas.width = SCOPE_SIZE * dpr;
+      canvas.height = SCOPE_SIZE * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Background
     ctx.fillStyle = '#030a04';
@@ -123,7 +125,12 @@ export default function RadarScope({ aircraft, conflicts, selectedAircraft, onSe
   }, [aircraft, conflicts, selectedAircraft, weather, sweepAngle]);
 
   useEffect(() => {
-    draw();
+    const render = () => {
+      draw();
+      animRef.current = requestAnimationFrame(render);
+    };
+    animRef.current = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animRef.current);
   }, [draw]);
 
   function drawWeather(ctx, weather) {
@@ -155,14 +162,18 @@ export default function RadarScope({ aircraft, conflicts, selectedAircraft, onSe
     const isConflict = conflicts.some(c => c.aircraft1.id === ac.id || c.aircraft2.id === ac.id);
     const isEmergency = !!ac.emergency;
 
-    // Trail
+    // Contrail — fading dots that grow toward the aircraft
     ctx.save();
     ac.trail.forEach((t, i) => {
-      const alpha = (i + 1) / ac.trail.length * 0.3;
+      const ratio = (i + 1) / ac.trail.length;
+      const alpha = ratio * 0.4;
+      const r = 0.8 + ratio * 1.6;
       ctx.fillStyle = isEmergency
-        ? `rgba(255, 60, 60, ${alpha})`
-        : `rgba(0, 220, 60, ${alpha})`;
-      ctx.fillRect(t.x - 1, t.y - 1, 2, 2);
+        ? `rgba(255, 80, 80, ${alpha})`
+        : `rgba(0, 230, 80, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+      ctx.fill();
     });
     ctx.restore();
 
@@ -173,13 +184,26 @@ export default function RadarScope({ aircraft, conflicts, selectedAircraft, onSe
     else if (isConflict) color = 'rgba(255, 200, 0, 1)';
     else if (isSelected) color = 'rgba(100, 255, 150, 1)';
 
-    // Draw blip shape
+    // Draw blip shape with phosphor glow
     const size = ac.aircraft.category === 'SUPER' ? 6 : ac.aircraft.category === 'HEAVY' ? 5 : ac.aircraft.category === 'SMALL' ? 3 : 4;
 
+    ctx.shadowColor = color;
+    ctx.shadowBlur = isEmergency || isConflict ? 12 : 6;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(x, y, size, 0, Math.PI * 2);
     ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Pulsing selection ring
+    if (isSelected) {
+      const pulse = 1 + Math.sin(Date.now() / 200) * 0.25;
+      ctx.strokeStyle = 'rgba(120, 255, 170, 0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, y, (size + 6) * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
     // Heading indicator line
     const headRad = ((90 - ac.heading) * Math.PI) / 180;

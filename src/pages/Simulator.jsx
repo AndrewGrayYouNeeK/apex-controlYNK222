@@ -15,6 +15,7 @@ import VoiceControl from '@/components/atc/VoiceControl';
 import InstructorPanel from '@/components/atc/InstructorPanel';
 import CommandInput from '@/components/atc/CommandInput';
 import { Radio, Pause, Play, LogOut, Volume2, VolumeX } from 'lucide-react';
+import { initAudio, startAmbience, stopAmbience, startMusic, stopMusic, sfx, haptic, getSoundSettings } from '@/lib/soundEngine';
 
 export default function Simulator() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -97,8 +98,12 @@ export default function Simulator() {
 
     // Generate readback
     const readback = generateReadback(parsed, ac);
+    sfx.radioStart();
+    sfx.command();
+    haptic(8);
     addMessage('pilot', ac.callsign, readback);
     speak(readback);
+    setTimeout(() => sfx.radioEnd(), 250);
 
     // Apply commands
     setAircraft(prev => prev.map(a => {
@@ -131,6 +136,8 @@ export default function Simulator() {
     if (aircraftRef.current.length > 2) {
       const emg = generateEmergency(aircraftRef.current, difficulty);
       if (emg) {
+        sfx.emergency();
+        haptic([40, 30, 40]);
         addMessage('alert', emg.aircraft.callsign, `MAYDAY MAYDAY MAYDAY, ${emg.aircraft.spoken}, ${emg.emergency.description}`);
         showFeedback('emergency', getInstructorFeedback('emergency'));
         speak(`MAYDAY MAYDAY MAYDAY, ${emg.aircraft.spoken}, declaring emergency`);
@@ -168,6 +175,8 @@ export default function Simulator() {
         });
 
         landed.forEach(ac => {
+          sfx.success();
+          haptic(20);
           addMessage('system', 'SYSTEM', `${ac.callsign} — Safe landing. ${ac.emergency ? 'Emergency handled!' : ''}`);
           setScore(prev => prev + calculateScore(ac.emergency ? 'emergency_handled' : 'safe_landing', difficulty.id));
         });
@@ -193,6 +202,8 @@ export default function Simulator() {
         if (newConflicts.length > 0) {
           newConflicts.forEach(c => {
             if (c.severity === 'CRITICAL') {
+              sfx.conflict();
+              haptic([30, 40, 30]);
               showFeedback('near_miss', getInstructorFeedback('near_miss'));
               setScore(prev => prev + calculateScore('near_miss', difficulty.id));
             }
@@ -256,6 +267,27 @@ export default function Simulator() {
       }, 2000);
     }
   }, [difficulty.id, showFeedback, addMessage]);
+
+  // Start audio (ambience + music) on mount; respects saved sound settings
+  useEffect(() => {
+    initAudio();
+    const s = getSoundSettings();
+    startAmbience();
+    if (s.musicOn) startMusic();
+    return () => {
+      stopAmbience();
+      stopMusic();
+    };
+  }, []);
+
+  // Pause/resume ambience + music with the game
+  useEffect(() => {
+    if (paused || gameOver) {
+      stopMusic();
+    } else if (getSoundSettings().musicOn) {
+      startMusic();
+    }
+  }, [paused, gameOver]);
 
   // Save career progress
   useEffect(() => {
