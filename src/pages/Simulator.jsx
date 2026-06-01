@@ -123,7 +123,7 @@ export default function Simulator() {
   // Spawn new aircraft
   const spawnAircraft = useCallback(() => {
     if (paused || gameOver) return;
-    const maxTraffic = Math.floor(airport.trafficDensity * difficulty.trafficMult);
+    const maxTraffic = Math.max(3, Math.round(airport.trafficDensity * difficulty.trafficMult));
     if (aircraftRef.current.length >= maxTraffic) return;
 
     const type = Math.random() > 0.4 ? 'arrival' : 'departure';
