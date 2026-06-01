@@ -14,6 +14,7 @@ import CommLog from '@/components/atc/CommLog';
 import VoiceControl from '@/components/atc/VoiceControl';
 import InstructorPanel from '@/components/atc/InstructorPanel';
 import CommandInput from '@/components/atc/CommandInput';
+import TutorialOverlay, { TUTORIAL_STEPS } from '@/components/atc/TutorialOverlay';
 import { Radio, Pause, Play, LogOut, Volume2, VolumeX } from 'lucide-react';
 import { initAudio, startAmbience, stopAmbience, startMusic, stopMusic, sfx, haptic, getSoundSettings } from '@/lib/soundEngine';
 
@@ -38,6 +39,29 @@ export default function Simulator() {
   const [sweepAngle, setSweepAngle] = useState(0);
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [gameOver, setGameOver] = useState(false);
+
+  // Guided tutorial — only active on the tutorial difficulty
+  const [tutorialStep, setTutorialStep] = useState(difficultyId === 'tutorial' ? 0 : -1);
+  const tutorialActive = tutorialStep >= 0 && tutorialStep < TUTORIAL_STEPS.length;
+  const tutorialStepRef = useRef(tutorialStep);
+  tutorialStepRef.current = tutorialStep;
+
+  const advanceTutorial = useCallback((fromStepId) => {
+    setTutorialStep(prev => {
+      if (prev < 0) return prev;
+      // If a specific step is expected, only advance from that step
+      if (fromStepId && TUTORIAL_STEPS[prev]?.id !== fromStepId) return prev;
+      return prev + 1;
+    });
+  }, []);
+
+  const skipTutorial = useCallback(() => setTutorialStep(-1), []);
+
+  // Selecting an aircraft advances the "select" tutorial step
+  const handleSelectAircraft = useCallback((id) => {
+    setSelectedAircraft(id);
+    if (id) advanceTutorial('select');
+  }, [advanceTutorial]);
 
   const aircraftRef = useRef(aircraft);
   const scoreRef = useRef(score);
@@ -118,7 +142,16 @@ export default function Simulator() {
     if (Math.random() > 0.7) {
       showFeedback('good', getInstructorFeedback('good'));
     }
-  }, [addMessage, speak, showFeedback, difficulty]);
+
+    // Advance the guided tutorial based on the command type issued
+    const types = parsed.commands.map(c => c.type);
+    const curStep = TUTORIAL_STEPS[tutorialStepRef.current];
+    if (curStep) {
+      if (curStep.id === 'heading' && types.includes('heading')) advanceTutorial('heading');
+      else if (curStep.id === 'altitude' && types.includes('altitude')) advanceTutorial('altitude');
+      else if (curStep.id === 'land' && types.includes('cleared_approach')) advanceTutorial('land');
+    }
+  }, [addMessage, speak, showFeedback, difficulty, advanceTutorial]);
 
   // Spawn new aircraft
   const spawnAircraft = useCallback(() => {
@@ -258,15 +291,6 @@ export default function Simulator() {
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
 
-  // Tutorial initial message
-  useEffect(() => {
-    if (difficulty.id === 'tutorial') {
-      setTimeout(() => {
-        showFeedback('info', "Welcome, trainee. Use your mic or type commands below. Click aircraft on the radar to select them. Issue headings, altitudes, and approach clearances.");
-        addMessage('instructor', 'INSTRUCTOR', "Welcome to Apex Control. Let's start with the basics. Aircraft will appear on your scope. Click them, then issue commands like: '[callsign] turn left heading two seven zero, descend and maintain three thousand'.");
-      }, 2000);
-    }
-  }, [difficulty.id, showFeedback, addMessage]);
 
   // Start audio (ambience + music) on mount; respects saved sound settings
   useEffect(() => {
@@ -346,6 +370,15 @@ export default function Simulator() {
         </div>
       )}
 
+      {/* Guided tutorial overlay */}
+      {tutorialActive && (
+        <TutorialOverlay
+          stepIndex={tutorialStep}
+          onAdvance={() => setTutorialStep(prev => prev + 1)}
+          onSkip={skipTutorial}
+        />
+      )}
+
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden relative z-10">
         {/* Left panel - Status & Flight Strips */}
@@ -364,7 +397,7 @@ export default function Simulator() {
           <FlightStrips
             aircraft={aircraft}
             selectedAircraft={selectedAircraft}
-            onSelectAircraft={setSelectedAircraft}
+            onSelectAircraft={handleSelectAircraft}
           />
         </div>
 
@@ -374,7 +407,7 @@ export default function Simulator() {
             aircraft={aircraft}
             conflicts={conflicts}
             selectedAircraft={selectedAircraft}
-            onSelectAircraft={setSelectedAircraft}
+            onSelectAircraft={handleSelectAircraft}
             weather={weather}
             sweepAngle={sweepAngle}
           />
