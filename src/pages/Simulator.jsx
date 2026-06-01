@@ -327,7 +327,7 @@ export default function Simulator() {
       <div className="crt-overlay" />
 
       {/* Top bar */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/30 bg-card/30 relative z-10">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/30 bg-card/30 relative z-[60]">
         <div className="flex items-center gap-3">
           <Radio className="w-4 h-4 text-primary" />
           <span className="font-display text-xs text-primary text-glow tracking-wider">YOUNEEK APEX CONTROL</span>
