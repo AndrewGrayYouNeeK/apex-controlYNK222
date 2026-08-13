@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { AIRPORTS, DIFFICULTY_LEVELS } from '@/lib/gameData';
+import { AIRPORTS, DIFFICULTY_LEVELS, CAREER_MISSIONS } from '@/lib/gameData';
 import {
   createAircraft, updateAircraft, checkConflicts, generateEmergency,
   getWeatherForDifficulty, getInstructorFeedback, parseVoiceCommand,
   generateReadback, applyCommands, calculateScore
 } from '@/lib/gameEngine';
+import { awardSessionXp } from '@/lib/careerProgress';
 import RadarScope from '@/components/atc/RadarScope';
 import FlightStrips from '@/components/atc/FlightStrips';
 import StatusPanel from '@/components/atc/StatusPanel';
@@ -15,16 +16,21 @@ import VoiceControl from '@/components/atc/VoiceControl';
 import InstructorPanel from '@/components/atc/InstructorPanel';
 import CommandInput from '@/components/atc/CommandInput';
 import TutorialOverlay, { TUTORIAL_STEPS } from '@/components/atc/TutorialOverlay';
-import { Radio, Pause, Play, LogOut, Volume2, VolumeX } from 'lucide-react';
+import { Radio, Pause, Play, LogOut, Volume2, VolumeX, Trophy } from 'lucide-react';
 import { initAudio, startAmbience, stopAmbience, startMusic, stopMusic, sfx, haptic, getSoundSettings } from '@/lib/soundEngine';
+
+const MAX_STRIKES = 3;
+const MIN_SCORE = -1500;
 
 export default function Simulator() {
   const urlParams = new URLSearchParams(window.location.search);
   const airportId = urlParams.get('airport') || 'KOSH';
   const difficultyId = urlParams.get('difficulty') || 'tutorial';
+  const missionId = urlParams.get('mission');
 
   const airport = AIRPORTS.find(a => a.id === airportId) || AIRPORTS[0];
   const difficulty = DIFFICULTY_LEVELS.find(d => d.id === difficultyId) || DIFFICULTY_LEVELS[0];
+  const mission = missionId ? CAREER_MISSIONS.find(m => m.id === missionId) : null;
 
   const [aircraft, setAircraft] = useState([]);
   const [conflicts, setConflicts] = useState([]);
@@ -39,8 +45,10 @@ export default function Simulator() {
   const [sweepAngle, setSweepAngle] = useState(0);
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [gameOver, setGameOver] = useState(false);
+  const [gameOverReason, setGameOverReason] = useState(null);
+  const [strikes, setStrikes] = useState(0);
+  const [stats, setStats] = useState({ landings: 0, departures: 0, emergencies: 0 });
 
-  // Guided tutorial — only active on the tutorial difficulty
   const [tutorialStep, setTutorialStep] = useState(difficultyId === 'tutorial' ? 0 : -1);
   const tutorialActive = tutorialStep >= 0 && tutorialStep < TUTORIAL_STEPS.length;
   const tutorialStepRef = useRef(tutorialStep);
@@ -49,7 +57,6 @@ export default function Simulator() {
   const advanceTutorial = useCallback((fromStepId) => {
     setTutorialStep(prev => {
       if (prev < 0) return prev;
-      // If a specific step is expected, only advance from that step
       if (fromStepId && TUTORIAL_STEPS[prev]?.id !== fromStepId) return prev;
       return prev + 1;
     });
@@ -57,7 +64,6 @@ export default function Simulator() {
 
   const skipTutorial = useCallback(() => setTutorialStep(-1), []);
 
-  // Selecting an aircraft advances the "select" tutorial step
   const handleSelectAircraft = useCallback((id) => {
     setSelectedAircraft(id);
     if (id) advanceTutorial('select');
@@ -65,21 +71,26 @@ export default function Simulator() {
 
   const aircraftRef = useRef(aircraft);
   const scoreRef = useRef(score);
-  const gameLoopRef = useRef(null);
-  const spawnTimerRef = useRef(null);
+  const gameOverRef = useRef(false);
+  const prevCriticalRef = useRef(new Set());
   const lastUpdateRef = useRef(Date.now());
 
   aircraftRef.current = aircraft;
   scoreRef.current = score;
 
-  // Add message to comm log
+  const endGame = useCallback((reason) => {
+    if (gameOverRef.current) return;
+    gameOverRef.current = true;
+    setGameOverReason(reason);
+    setGameOver(true);
+  }, []);
+
   const addMessage = useCallback((type, sender, text) => {
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     setMessages(prev => [...prev.slice(-50), { type, sender, text, time }]);
   }, []);
 
-  // Text-to-speech for pilot readbacks
   const speak = useCallback((text) => {
     if (!ttsEnabled) return;
     const utterance = new SpeechSynthesisUtterance(text);
@@ -92,14 +103,20 @@ export default function Simulator() {
     speechSynthesis.speak(utterance);
   }, [ttsEnabled]);
 
-  // Show instructor feedback
   const showFeedback = useCallback((type, text) => {
     setFeedback({ type, text });
     addMessage('instructor', 'INSTRUCTOR', text);
     setTimeout(() => setFeedback(null), 5000);
   }, [addMessage]);
 
-  // Handle voice/text command
+  const registerStrike = useCallback(() => {
+    setStrikes(prev => {
+      const next = prev + 1;
+      if (next >= MAX_STRIKES) endGame('strikes');
+      return next;
+    });
+  }, [endGame]);
+
   const handleCommand = useCallback((transcript) => {
     const parsed = parseVoiceCommand(transcript, aircraftRef.current);
     addMessage('controller', 'YOU', transcript);
@@ -120,7 +137,6 @@ export default function Simulator() {
     const ac = aircraftRef.current.find(a => a.id === parsed.callsign);
     if (!ac) return;
 
-    // Generate readback
     const readback = generateReadback(parsed, ac);
     sfx.radioStart();
     sfx.command();
@@ -129,7 +145,6 @@ export default function Simulator() {
     speak(readback);
     setTimeout(() => sfx.radioEnd(), 250);
 
-    // Apply commands
     setAircraft(prev => prev.map(a => {
       if (a.id === parsed.callsign) {
         return applyCommands({ ...a }, parsed.commands);
@@ -137,13 +152,11 @@ export default function Simulator() {
       return a;
     }));
 
-    // Good feedback
     setScore(prev => prev + calculateScore('good_separation', difficulty.id));
     if (Math.random() > 0.7) {
       showFeedback('good', getInstructorFeedback('good'));
     }
 
-    // Advance the guided tutorial based on the command type issued
     const types = parsed.commands.map(c => c.type);
     const curStep = TUTORIAL_STEPS[tutorialStepRef.current];
     if (curStep) {
@@ -153,7 +166,6 @@ export default function Simulator() {
     }
   }, [addMessage, speak, showFeedback, difficulty, advanceTutorial]);
 
-  // Spawn new aircraft
   const spawnAircraft = useCallback(() => {
     if (paused || gameOver) return;
     const maxTraffic = Math.max(3, Math.round(airport.trafficDensity * difficulty.trafficMult));
@@ -165,7 +177,6 @@ export default function Simulator() {
     addMessage('pilot', newAc.callsign, `${airport.id} ${type === 'arrival' ? 'Approach' : 'Tower'}, ${newAc.spoken}, ${newAc.aircraft.type}, ${type === 'arrival' ? `inbound from the ${['north', 'south', 'east', 'west'][Math.floor(Math.random() * 4)]}, altitude ${Math.floor(newAc.altitude / 1000)} thousand` : 'ready for departure'}.`);
     speak(`${airport.id} ${type === 'arrival' ? 'Approach' : 'Tower'}, ${newAc.spoken}`);
 
-    // Maybe generate emergency
     if (aircraftRef.current.length > 2) {
       const emg = generateEmergency(aircraftRef.current, difficulty);
       if (emg) {
@@ -178,7 +189,6 @@ export default function Simulator() {
     }
   }, [airport, difficulty, paused, gameOver, addMessage, speak, showFeedback]);
 
-  // Game loop
   useEffect(() => {
     if (paused || gameOver) return;
 
@@ -187,17 +197,12 @@ export default function Simulator() {
       const delta = now - lastUpdateRef.current;
       lastUpdateRef.current = now;
 
-      // Update sweep angle
       setSweepAngle(prev => (prev + (360 / 4000) * delta) % 360);
-
-      // Update game time
       setGameTime(prev => prev + 1);
 
-      // Update aircraft positions
       setAircraft(prev => {
         const updated = prev.map(ac => updateAircraft({ ...ac }, delta)).filter(ac => !ac.offScreen);
 
-        // Check for landed aircraft (close to center and low altitude on approach)
         const landed = [];
         const remaining = updated.filter(ac => {
           if (ac.cleared && ac.altitude < 500 && Math.sqrt((ac.x - 400) ** 2 + (ac.y - 400) ** 2) < 30) {
@@ -211,10 +216,14 @@ export default function Simulator() {
           sfx.success();
           haptic(20);
           addMessage('system', 'SYSTEM', `${ac.callsign} — Safe landing. ${ac.emergency ? 'Emergency handled!' : ''}`);
-          setScore(prev => prev + calculateScore(ac.emergency ? 'emergency_handled' : 'safe_landing', difficulty.id));
+          setScore(s => s + calculateScore(ac.emergency ? 'emergency_handled' : 'safe_landing', difficulty.id));
+          setStats(s => ({
+            ...s,
+            landings: s.landings + 1,
+            emergencies: s.emergencies + (ac.emergency ? 1 : 0),
+          }));
         });
 
-        // Check departed
         const handedOff = [];
         const stillHere = remaining.filter(ac => {
           if (ac.handedOff) {
@@ -224,22 +233,31 @@ export default function Simulator() {
           return true;
         });
 
-        handedOff.forEach(ac => {
-          setScore(prev => prev + calculateScore('safe_departure', difficulty.id));
+        handedOff.forEach(() => {
+          setScore(s => s + calculateScore('safe_departure', difficulty.id));
+          setStats(s => ({ ...s, departures: s.departures + 1 }));
         });
 
-        // Check conflicts
         const newConflicts = checkConflicts(stillHere);
         setConflicts(newConflicts);
 
-        if (newConflicts.length > 0) {
-          newConflicts.forEach(c => {
-            if (c.severity === 'CRITICAL') {
-              sfx.conflict();
-              haptic([30, 40, 30]);
-              showFeedback('near_miss', getInstructorFeedback('near_miss'));
-              setScore(prev => prev + calculateScore('near_miss', difficulty.id));
-            }
+        const criticalIds = newConflicts
+          .filter(c => c.severity === 'CRITICAL')
+          .map(c => c.id);
+        const newCritical = criticalIds.filter(id => !prevCriticalRef.current.has(id));
+        prevCriticalRef.current = new Set(criticalIds);
+
+        if (newCritical.length > 0) {
+          newCritical.forEach(() => {
+            sfx.conflict();
+            haptic([30, 40, 30]);
+            showFeedback('near_miss', getInstructorFeedback('near_miss'));
+            setScore(s => {
+              const next = s + calculateScore('near_miss', difficulty.id);
+              if (next <= MIN_SCORE) endGame('score');
+              return next;
+            });
+            registerStrike();
           });
         }
 
@@ -247,24 +265,19 @@ export default function Simulator() {
       });
     }, 1000);
 
-    gameLoopRef.current = loop;
     return () => clearInterval(loop);
-  }, [paused, gameOver, difficulty, addMessage, showFeedback]);
+  }, [paused, gameOver, difficulty, addMessage, showFeedback, endGame, registerStrike]);
 
-  // Spawn timer
   useEffect(() => {
     if (paused || gameOver) return;
 
-    // Initial spawn
     setTimeout(() => spawnAircraft(), 1000);
     setTimeout(() => spawnAircraft(), 3000);
 
     const timer = setInterval(spawnAircraft, 8000 / difficulty.trafficMult);
-    spawnTimerRef.current = timer;
     return () => clearInterval(timer);
   }, [paused, gameOver, spawnAircraft, difficulty]);
 
-  // Weather changes
   useEffect(() => {
     if (difficulty.weatherMax === 0) return;
     const timer = setInterval(() => {
@@ -278,7 +291,6 @@ export default function Simulator() {
     return () => clearInterval(timer);
   }, [difficulty, showFeedback, addMessage]);
 
-  // Keyboard: space for PTT
   useEffect(() => {
     const handleKey = (e) => {
       if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
@@ -291,8 +303,6 @@ export default function Simulator() {
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
 
-
-  // Start audio (ambience + music) on mount; respects saved sound settings
   useEffect(() => {
     initAudio();
     const s = getSoundSettings();
@@ -304,7 +314,6 @@ export default function Simulator() {
     };
   }, []);
 
-  // Pause/resume ambience + music with the game
   useEffect(() => {
     if (paused || gameOver) {
       stopMusic();
@@ -313,27 +322,44 @@ export default function Simulator() {
     }
   }, [paused, gameOver]);
 
-  // Save career progress
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem('atc_career') || '{}');
-    saved.xp = (saved.xp || 0) + Math.max(0, score);
-    saved.lastAirport = airportId;
-    saved.lastDifficulty = difficultyId;
-    localStorage.setItem('atc_career', JSON.stringify(saved));
-  }, [score, airportId, difficultyId]);
+    if (!gameOver) return;
+    sfx.gameOver();
+    awardSessionXp(scoreRef.current, missionId);
+  }, [gameOver, missionId]);
+
+  const missionComplete = mission && score >= mission.scoreTarget;
+  const shiftEnded = gameOverReason === 'complete';
 
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden relative">
       <div className="crt-overlay" />
 
-      {/* Top bar */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/30 bg-card/30 relative z-[60]">
-        <div className="flex items-center gap-3">
-          <Radio className="w-4 h-4 text-primary" />
-          <span className="font-display text-xs text-primary text-glow tracking-wider">YOUNEEK APEX CONTROL</span>
-          <span className="font-mono text-[10px] text-muted-foreground">{airport.id} — {airport.name}</span>
+        <div className="flex items-center gap-3 min-w-0">
+          <Radio className="w-4 h-4 text-primary shrink-0" />
+          <span className="font-display text-xs text-primary text-glow tracking-wider shrink-0">YOUNEEK APEX CONTROL</span>
+          <span className="font-mono text-[10px] text-muted-foreground truncate">{airport.id} — {airport.name}</span>
+          {mission && (
+            <span className="font-mono text-[9px] text-accent hidden md:inline truncate">
+              MISSION: {mission.title} ({score}/{mission.scoreTarget} XP)
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
+          {mission && missionComplete && !gameOver && (
+            <Button
+              size="sm"
+              onClick={() => endGame('complete')}
+              className="h-7 font-display text-[9px] tracking-wider bg-accent text-accent-foreground hover:bg-accent/80"
+            >
+              <Trophy className="w-3 h-3 mr-1" />
+              END SHIFT
+            </Button>
+          )}
+          <span className="font-mono text-[9px] text-destructive hidden sm:inline">
+            STRIKES {strikes}/{MAX_STRIKES}
+          </span>
           <Button
             variant="ghost"
             size="sm"
@@ -358,8 +384,7 @@ export default function Simulator() {
         </div>
       </div>
 
-      {/* Paused overlay */}
-      {paused && (
+      {paused && !gameOver && (
         <div className="absolute inset-0 z-50 bg-background/80 flex items-center justify-center">
           <div className="text-center">
             <div className="font-display text-2xl text-primary text-glow tracking-wider mb-4">PAUSED</div>
@@ -370,8 +395,48 @@ export default function Simulator() {
         </div>
       )}
 
-      {/* Guided tutorial overlay */}
-      {tutorialActive && (
+      {gameOver && (
+        <div className="absolute inset-0 z-50 bg-background/90 flex items-center justify-center p-6">
+          <div className="max-w-md w-full border border-border/40 rounded bg-card/95 p-6 text-center space-y-4">
+            <div className={`font-display text-2xl tracking-wider ${shiftEnded ? 'text-primary text-glow' : 'text-destructive text-glow-red'}`}>
+              {shiftEnded ? 'SHIFT COMPLETE' : 'SHIFT TERMINATED'}
+            </div>
+            <p className="font-mono text-xs text-muted-foreground">
+              {shiftEnded && mission
+                ? `Mission "${mission.title}" objectives met. +${mission.xpReward} bonus XP awarded.`
+                : gameOverReason === 'strikes'
+                  ? 'Too many separation losses. The FAA has some questions.'
+                  : gameOverReason === 'score'
+                    ? 'Your performance rating fell below minimum standards.'
+                    : 'Your shift has ended.'}
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 text-left">
+              <StatBox label="Final Score" value={score.toLocaleString()} />
+              <StatBox label="Shift Time" value={`${Math.floor(gameTime / 60)}:${String(gameTime % 60).padStart(2, '0')}`} />
+              <StatBox label="Landings" value={stats.landings} />
+              <StatBox label="Departures" value={stats.departures} />
+              <StatBox label="Emergencies" value={stats.emergencies} />
+              <StatBox label="Strikes" value={`${strikes}/${MAX_STRIKES}`} />
+            </div>
+
+            <div className="flex gap-3 justify-center pt-2">
+              <Link to="/">
+                <Button variant="outline" className="font-display tracking-wider text-xs border-primary/30 text-primary">
+                  MAIN MENU
+                </Button>
+              </Link>
+              <Link to={`/sim?airport=${airportId}&difficulty=${difficultyId}${missionId ? `&mission=${missionId}` : ''}`}>
+                <Button className="font-display tracking-wider text-xs bg-primary text-primary-foreground hover:bg-primary/80">
+                  TRY AGAIN
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tutorialActive && !gameOver && (
         <TutorialOverlay
           stepIndex={tutorialStep}
           onAdvance={() => setTutorialStep(prev => prev + 1)}
@@ -379,9 +444,7 @@ export default function Simulator() {
         />
       )}
 
-      {/* Main content */}
       <div className="flex-1 flex overflow-hidden relative z-10">
-        {/* Left panel - Status & Flight Strips */}
         <div className="w-56 border-r border-border/30 bg-card/20 p-2 flex flex-col gap-2 overflow-y-auto">
           <StatusPanel
             weather={weather}
@@ -392,6 +455,21 @@ export default function Simulator() {
             gameTime={gameTime}
             difficulty={difficulty}
           />
+          {mission && (
+            <div className="border border-accent/20 rounded bg-accent/5 p-2">
+              <div className="font-mono text-[9px] text-accent uppercase tracking-wider mb-1">Career Objective</div>
+              <div className="font-mono text-[10px] text-muted-foreground">{mission.description}</div>
+              <div className="mt-2 h-1 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-accent rounded-full transition-all"
+                  style={{ width: `${Math.min(100, (score / mission.scoreTarget) * 100)}%` }}
+                />
+              </div>
+              <div className="font-mono text-[9px] text-muted-foreground mt-1">
+                {score} / {mission.scoreTarget} score
+              </div>
+            </div>
+          )}
           <div className="h-px bg-border/20" />
           <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-wider mb-1">FLIGHT STRIPS</div>
           <FlightStrips
@@ -401,7 +479,6 @@ export default function Simulator() {
           />
         </div>
 
-        {/* Center - Radar */}
         <div className="flex-1 flex items-center justify-center bg-[#020804] relative p-4">
           <RadarScope
             aircraft={aircraft}
@@ -413,12 +490,9 @@ export default function Simulator() {
           />
         </div>
 
-        {/* Right panel - Comms */}
         <div className="w-64 border-l border-border/30 bg-card/20 p-2 flex flex-col gap-2">
-          {/* Instructor */}
           <InstructorPanel feedback={feedback} show={true} />
 
-          {/* Comm log */}
           <div className="flex-1 flex flex-col">
             <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-wider mb-1">COMM LOG</div>
             <div className="flex-1 overflow-hidden">
@@ -428,7 +502,6 @@ export default function Simulator() {
 
           <div className="h-px bg-border/20" />
 
-          {/* Voice Control */}
           <VoiceControl
             onCommand={handleCommand}
             isListening={isListening}
@@ -438,13 +511,21 @@ export default function Simulator() {
 
           <div className="h-px bg-border/20" />
 
-          {/* Text command fallback */}
           <div>
             <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-wider mb-1">TEXT COMMAND</div>
             <CommandInput onCommand={handleCommand} enabled={!paused && !gameOver} />
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function StatBox({ label, value }) {
+  return (
+    <div className="border border-border/30 rounded bg-card/50 p-2">
+      <div className="font-mono text-[9px] text-muted-foreground uppercase">{label}</div>
+      <div className="font-mono text-sm text-primary">{value}</div>
     </div>
   );
 }

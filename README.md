@@ -1,39 +1,52 @@
-**Welcome to your Base44 project** 
+# YOUNEEK APEX CONTROL
 
-**About**
+Air Traffic Control simulator built with React and Vite. Guide aircraft to safe landings, manage departures, handle emergencies, and climb the career ladder from Ground Observer to Apex Controller.
 
-View and Edit  your app on [Base44.com](http://Base44.com) 
+## Features
 
-This project contains everything you need to run your app locally.
+- **Radar scope** with live aircraft tracking, conflict alerts, and weather
+- **Voice commands** via Web Speech API (Chrome recommended) plus text command fallback
+- **Tutorial mode** with step-by-step guided training at Wittman Regional (KOSH)
+- **Career mode** with ranked missions, XP progression, and unlockable challenges
+- **Emergency drills** for worst-case scenario practice
+- **Procedural audio** — synthesized SFX and ambient music, no external audio files
 
-**Edit the code in your local development environment**
+## Getting Started
 
-Any change pushed to the repo will also be reflected in the Base44 Builder.
-
-**Prerequisites:** 
-
-1. Clone the repository using the project's Git URL 
-2. Navigate to the project directory
-3. Install dependencies: `npm install`
-4. Create an `.env.local` file and set the right environment variables
-
-```
-VITE_BASE44_APP_ID=your_app_id
-VITE_BASE44_APP_BASE_URL=your_backend_url
-
-e.g.
-VITE_BASE44_APP_ID=cbef744a8545c389ef439ea6
-VITE_BASE44_APP_BASE_URL=https://my-to-do-list-81bfaad7.base44.app
+```bash
+npm install
+npm run dev
 ```
 
-Run the app: `npm run dev`
+Open the URL shown in the terminal (typically `http://localhost:5173`).
 
-**Publish your changes**
+## Build
 
-Open [Base44.com](http://Base44.com) and click on Publish.
+```bash
+npm run build
+npm run preview
+```
 
-**Docs & Support**
+## How to Play
 
-Documentation: [https://docs.base44.com/Integrations/Using-GitHub](https://docs.base44.com/Integrations/Using-GitHub)
+1. Choose **Free Play**, **Career Mode**, or **Emergency Drills** from the main menu.
+2. Select an airport and difficulty level.
+3. **Select** an aircraft on the radar or flight strip panel.
+4. Issue commands by voice (mic button or Space) or text:
+   - `turn left heading 270`
+   - `descend and maintain 3000`
+   - `cleared ILS approach`
+5. Keep aircraft separated — flashing conflict lines mean danger.
+6. Handle emergencies first. Three critical separation losses ends your shift.
 
-Support: [https://app.base44.com/support](https://app.base44.com/support)
+## Tech Stack
+
+- React 18 + Vite 6
+- Tailwind CSS + Radix UI
+- Framer Motion
+- Web Audio API (procedural sound)
+- Web Speech API (voice recognition + TTS readbacks)
+
+## Career Progress
+
+XP is earned from safe landings, departures, and completed career missions. Progress is saved to `localStorage` under the key `atc_career`.

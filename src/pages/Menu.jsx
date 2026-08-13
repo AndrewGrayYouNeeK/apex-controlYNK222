@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { AIRPORTS, DIFFICULTY_LEVELS, CAREER_RANKS } from '@/lib/gameData';
-import { Radio, Plane, AlertTriangle, CloudLightning, Trophy, ChevronRight, Volume2 } from 'lucide-react';
+import { AIRPORTS, DIFFICULTY_LEVELS, CAREER_RANKS, CAREER_MISSIONS } from '@/lib/gameData';
+import { loadCareerProgress, getCurrentRank, getNextRank, isMissionUnlocked, isMissionCompleted } from '@/lib/careerProgress';
+import { Radio, Plane, AlertTriangle, Trophy, ChevronRight, Lock, CheckCircle2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function Menu() {
@@ -11,11 +12,10 @@ export default function Menu() {
   const [selectedDifficulty, setSelectedDifficulty] = useState(null);
   const [view, setView] = useState('main');
 
-  // Load career progress
-  const savedProgress = JSON.parse(localStorage.getItem('atc_career') || '{}');
+  const savedProgress = loadCareerProgress();
   const totalXP = savedProgress.xp || 0;
-  const currentRank = CAREER_RANKS.filter(r => r.xpRequired <= totalXP).pop() || CAREER_RANKS[0];
-  const nextRank = CAREER_RANKS.find(r => r.xpRequired > totalXP);
+  const currentRank = getCurrentRank(totalXP);
+  const nextRank = getNextRank(totalXP);
 
   if (view === 'airport') return <AirportSelect onSelect={(a) => { setSelectedAirport(a); setView('difficulty'); }} onBack={() => setView('main')} />;
   if (view === 'difficulty') return <DifficultySelect airport={selectedAirport} onSelect={(d) => { setSelectedDifficulty(d); setView('ready'); }} onBack={() => setView('airport')} />;
@@ -292,8 +292,63 @@ function CareerView({ xp, rank, onBack }) {
         <button onClick={onBack} className="font-mono text-xs text-muted-foreground hover:text-primary mb-4">
           ← BACK
         </button>
-        <h2 className="font-display text-xl text-primary text-glow tracking-wider mb-6">CAREER PROGRESS</h2>
+        <h2 className="font-display text-xl text-primary text-glow tracking-wider mb-2">CAREER PROGRESS</h2>
+        <p className="font-mono text-xs text-muted-foreground mb-6">
+          {rank.title} — {xp.toLocaleString()} XP
+        </p>
 
+        <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Missions</div>
+        <div className="space-y-2 mb-6">
+          {CAREER_MISSIONS.map(mission => {
+            const unlocked = isMissionUnlocked(mission, xp);
+            const completed = isMissionCompleted(mission.id);
+            const airport = AIRPORTS.find(a => a.id === mission.airport);
+            const diff = DIFFICULTY_LEVELS.find(d => d.id === mission.difficulty);
+
+            return (
+              <div
+                key={mission.id}
+                className={`p-3 border rounded transition-all ${
+                  completed ? 'border-primary/40 bg-primary/5' :
+                  unlocked ? 'border-border/50 bg-card/50' :
+                  'border-border/20 bg-card/20 opacity-50'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      {completed ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0" />
+                      ) : !unlocked ? (
+                        <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      ) : null}
+                      <span className="font-display text-xs text-primary tracking-wider">{mission.title}</span>
+                    </div>
+                    <p className="font-mono text-[9px] text-muted-foreground/70 mt-1">{mission.description}</p>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <Badge variant="outline" className="text-[8px]">{airport?.id}</Badge>
+                      <Badge variant="outline" className="text-[8px]">{diff?.label}</Badge>
+                      <Badge variant="outline" className="text-[8px]">Target: {mission.scoreTarget}</Badge>
+                      <Badge variant="outline" className="text-[8px] text-accent">+{mission.xpReward} XP</Badge>
+                    </div>
+                  </div>
+                  {unlocked && !completed && (
+                    <Link to={`/sim?airport=${mission.airport}&difficulty=${mission.difficulty}&mission=${mission.id}`}>
+                      <Button size="sm" className="h-7 font-display text-[9px] tracking-wider shrink-0">
+                        START
+                      </Button>
+                    </Link>
+                  )}
+                  {completed && (
+                    <Badge variant="outline" className="text-[8px] border-primary text-primary shrink-0">DONE</Badge>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Ranks</div>
         <div className="space-y-2">
           {CAREER_RANKS.map(r => {
             const unlocked = xp >= r.xpRequired;
@@ -321,14 +376,6 @@ function CareerView({ xp, rank, onBack }) {
               </div>
             );
           })}
-        </div>
-
-        <div className="mt-6">
-          <Link to={`/sim?airport=KOSH&difficulty=tutorial`}>
-            <Button variant="outline" className="w-full font-display tracking-wider text-xs border-primary/30 text-primary">
-              START TRAINING
-            </Button>
-          </Link>
         </div>
       </div>
     </div>
