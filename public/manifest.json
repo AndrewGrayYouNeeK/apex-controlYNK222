@@ -1,0 +1,16 @@
+{
+  "name": "YOUNEEK APEX CONTROL",
+  "short_name": "APEX ATC",
+  "description": "Air Traffic Control Simulator",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0f14",
+  "theme_color": "#22c55e",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
